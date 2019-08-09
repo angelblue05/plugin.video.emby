@@ -102,7 +102,7 @@ def directory(label, path, folder=True, artwork=None, fanart=None, context=None)
 def dir_listitem(label, path, artwork=None, fanart=None):
 
     li = xbmcgui.ListItem(label, path=path)
-    li.setThumbnailImage(artwork or "special://home/addons/plugin.video.emby/icon.png")
+    li.setArt({'thumb': artwork or "special://home/addons/plugin.video.emby/icon.png"})
     li.setArt({"fanart": fanart or "special://home/addons/plugin.video.emby/fanart.jpg"})
     li.setArt({"landscape": artwork or fanart or "special://home/addons/plugin.video.emby/fanart.jpg"})
 
