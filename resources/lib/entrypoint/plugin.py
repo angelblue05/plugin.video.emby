@@ -23,7 +23,7 @@ import requests
 import downloader
 from emby import Emby
 from database import reset, get_sync, Database, emby_db, get_credentials
-from helper import _, event, settings, window, dialog, api, catch, kodi_version, JSONRPC
+from helper import _, event, settings, window, dialog, api, kodi_version, JSONRPC
 
 #################################################################################################
 
@@ -39,74 +39,45 @@ def server():
     ''' Setup global Emby client value or raise an exception.
     '''
     def decorator(func):
-        def wrapper(*args, **kwargs):
-            global EMBY
+        global EMBY
 
-            server = plugin.args.get('server')
-            LOG.info(plugin.args)
+        server = plugin.args.get('server')
+        if server == 'None':
+            server = plugin.args['server'] = None
 
-            if server == 'None':
-                server = plugin.args['server'] = None
+        try:
+            EMBY = Emby(server).get_client()
 
-            try:
-                EMBY = Emby(server).get_client()
-                if not EMBY['connected']:
-                    raise AttributeError
-            except (KeyError, AttributeError):
+            if not EMBY['connected']:
+                raise AttributeError
+        except (KeyError, AttributeError): # Server never loaded.
+            event('ServerConnect', {'Id': server})
 
-                LOG.warn("--[ ServerOffline ]")
-                event('ServerConnect', {'Id': server})
-                monitor = xbmc.Monitor()
+            monitor = xbmc.Monitor()
+            for i in range(300):
 
-                for i in range(30):
-                    dialog("notification", heading="{emby}", icon="{emby}", message=_(33218), sound=False)
+                if server is None and window('emby_online.bool'):
+                    Emby().set_state(window('emby.server.state.json'))
 
-                    if server is None and window('emby_online.bool'):
-                        Emby().set_state(window('emby.server.state.json'))
+                    break
 
-                        break
+                if server is not None and server in window('emby.server.states.json') or []:
+                    Emby(server).set_state(window('emby.server.%s.state.json' % server))
 
-                    if server is not None and server in window('emby.server.states.json') or []:
-                        Emby(server).set_state(window('emby.server.%s.state.json' % server))
+                    break
 
-                        break
-
-                    if monitor.waitForAbort(1):
-                        return
-                else:
-                    LOG.error("Server %s is not online", server)
-                    dialog("notification", heading="{emby}", icon="{emby}", message=_(33146) if server is None else _(33149), sound=False)
-
+                if monitor.waitForAbort(0.1):
                     return
+            else:
+                LOG.error("Server %s is not online", server)
+                dialog("notification", heading="{emby}", icon="{emby}", message=_(33146) if server is None else _(33149), sound=False)
 
-                EMBY = Emby(server).get_client()
+                return
 
-            return func(*args, **kwargs)
+            EMBY = Emby(server).get_client()
 
-        return wrapper
+        return func
     return decorator
-
-def directory(label, path, folder=True, artwork=None, fanart=None, context=None):
-
-    ''' Add directory listitem. context should be a list of tuples [(label, action)*]
-    '''
-    li = dir_listitem(label, path, artwork, fanart)
-
-    if context:
-        li.addContextMenuItems(context)
-
-    xbmcplugin.addDirectoryItem(int(sys.argv[1]), path, li, folder)
-
-    return li
-
-def dir_listitem(label, path, artwork=None, fanart=None):
-
-    li = xbmcgui.ListItem(label, path=path)
-    li.setThumbnailImage(artwork or "special://home/addons/plugin.video.emby/icon.png")
-    li.setArt({"fanart": fanart or "special://home/addons/plugin.video.emby/fanart.jpg"})
-    li.setArt({"landscape": artwork or fanart or "special://home/addons/plugin.video.emby/fanart.jpg"})
-
-    return li
 
 
 class Events(object):
@@ -117,6 +88,7 @@ class Events(object):
         ''' Parse the parameters. Reroute to our service.py
             where user is fully identified already.
         '''
+        """
         base_url = sys.argv[0]
         path = sys.argv[2]
 
@@ -132,14 +104,8 @@ class Events(object):
             server = None
 
         LOG.warn("path: %s params: %s", path, json.dumps(params, indent=4))
-        LOG.warn(sys.argv)
-        try:
-            plugin.run()
-
-            return
-        except Exception as error:
-            LOG.error(error)
-            pass
+        """
+        return plugin.run()
 
         if '/extrafanart' in base_url:
 
@@ -209,538 +175,422 @@ class Events(object):
             window('emby.sync.pause', clear=True)
             window('emby.playlist.plugin', clear=True)
 
-        if mode == 'playlist':
+        elif mode == 'playlist':
             event('PlayPlaylist', {'Id': params['id'], 'ServerId': server})
-        elif mode == 'photoviewer':
-            xbmc.executebuiltin('ShowPicture(%s/emby/Items/%s/Images/Primary)' % (Emby(server)['auth/server-address'], params['id']))
         elif mode == 'deviceid':
             client.reset_device_id()
-        elif mode == 'reset':
-            reset()
         elif mode == 'delete':
             delete_item()
         elif mode == 'nextepisodes':
             get_next_episodes(params['id'], params['limit'])
         elif mode == 'browse':
-            browser(params.get('type'), params.get('id'), params.get('folder'), server)
+            browse(params.get('type'), params.get('id'), params.get('folder'), server)
+        elif mode == 'synclib':
+            event('SyncLibrary', {'Id': params.get('id')})
+        elif mode == 'updatelib':
+            event('SyncLibrary', {'Id': params.get('id'), 'Update': True})
+        elif mode == 'repairlib':
+            event('RepairLibrary', {'Id': params.get('id')})
+        elif mode == 'removelib':
+            event('RemoveLibrary', {'Id': params.get('id')})
+        elif mode == 'repairlibs':
+            event('RepairLibrarySelection')
+        elif mode == 'updatelibs':
+            event('SyncLibrarySelection')
+        elif mode == 'removelibs':
+            event('RemoveLibrarySelection')
+        elif mode == 'addlibs':
+            event('AddLibrarySelection')
+        elif mode == 'connect':
+            event('EmbyConnect')
+        elif mode == 'addserver':
+            event('AddServer')
+        elif mode == 'login':
+            event('ServerConnect', {'Id': server})
+        elif mode == 'removeserver':
+            event('RemoveServer', {'Id': server})
+        elif mode == 'adduser':
+            add_user(params.get('permanent') == 'true')
+        elif mode == 'checkupdate':
+            event('CheckUpdate')
+        elif mode == 'resetupdate':
+            event('ResetUpdate')
+        elif mode == 'updateserver':
+            event('UpdateServer')
+        elif mode == 'managelibs':
+            manage_libraries()
+        elif mode == 'patchmusic':
+            event('PatchMusic', {'Notification': True})
+        elif mode == 'setssl':
+            event('SetServerSSL', {'Id': server})
+
+
+    @plugin.route('/')
+    def root():
+
+        ''' Display all emby nodes and dynamic entries when appropriate.
+        '''
+        LOG.info(plugin.args)
+        total = int(window('Emby.nodes.total') or 0)
+        sync = get_sync()
+        whitelist = [x.replace('Mixed:', "") for x in sync['Whitelist']]
+        servers = get_credentials()['Servers'][1:]
+
+        for i in range(total):
+
+            window_prop = "Emby.nodes.%s" % i
+            path = window('%s.index' % window_prop)
+
+            if not path:
+                path = window('%s.content' % window_prop) or window('%s.path' % window_prop)
+
+            label = window('%s.title' % window_prop)
+            node = window('%s.type' % window_prop)
+            artwork = window('%s.artwork' % window_prop)
+            view_id = window('%s.id' % window_prop)
+            context = []
+
+            if view_id and node in ('movies', 'tvshows', 'musicvideos', 'music', 'mixed') and view_id not in whitelist:
+                label = "%s %s" % (label.decode('utf-8'), _(33166))
+                context.append((_(33123), "RunPlugin(plugin://plugin.video.emby/?mode=synclib&id=%s)" % view_id))
+
+            if view_id and node in ('movies', 'tvshows', 'musicvideos', 'music') and view_id in whitelist:
+
+                context.append((_(33136), "RunPlugin(plugin://plugin.video.emby/?mode=updatelib&id=%s)" % view_id))
+                context.append((_(33132), "RunPlugin(plugin://plugin.video.emby/?mode=repairlib&id=%s)" % view_id))
+                context.append((_(33133), "RunPlugin(plugin://plugin.video.emby/?mode=removelib&id=%s)" % view_id))
+
+            LOG.debug("--[ listing/%s/%s ] %s", node, label, path)
+
+            if path:
+                if xbmc.getCondVisibility('Window.IsActive(Pictures)') and node in ('photos', 'homevideos'):
+                    directory(label, path, artwork=artwork)
+                elif xbmc.getCondVisibility('Window.IsActive(Videos)') and node not in ('photos', 'music', 'audiobooks'):
+                    directory(label, path, artwork=artwork, context=context)
+                elif xbmc.getCondVisibility('Window.IsActive(Music)') and node in ('music'):
+                    directory(label, path, artwork=artwork, context=context)
+                elif not xbmc.getCondVisibility('Window.IsActive(Videos) | Window.IsActive(Pictures) | Window.IsActive(Music)'):
+                    directory(label, path, artwork=artwork)
+
+        for server in servers:
+            context = []
+
+            if server.get('ManualAddress'):
+                context.append((_(30500), "RunPlugin(plugin://plugin.video.emby/?mode=setssl&server=%s)" % server['Id']))
+                context.append((_(33141), "RunPlugin(plugin://plugin.video.emby/?mode=removeserver&server=%s)" % server['Id']))
+
+            if 'AccessToken' not in server:
+                directory("%s (%s)" % (server['Name'], _(30539)), "plugin://plugin.video.emby/?mode=login&server=%s" % server['Id'], False, context=context)
+            else:
+                directory(server['Name'], "plugin://plugin.video.emby/?mode=browse&server=%s" % server['Id'], context=context)
+
+
+        directory(_(33134), "plugin://plugin.video.emby/?mode=addserver", False)
+        directory(_(33054), "plugin://plugin.video.emby/?mode=adduser", False)
+        directory(_(33194), "plugin://plugin.video.emby/?mode=managelibs", True)
+        #directory(_(5), plugin.url_for(addon_settings), False)
+        directory(_(33059), "plugin://plugin.video.emby/sync/artwork", False)#plugin.url_for(cache_artwork), False)
+        #directory(_(33058), plugin.url_for(addon_reset), False)
+        #directory(_(33192), plugin.url_for(addon_restart), False)
 
-@plugin.route('/photo/<item_id>')
-@server()
-def photo(item_id):
-    xbmc.executebuiltin('ShowPicture(%s/emby/Items/%s/Images/Primary)' % (EMBY['auth/server-address'], item_id))
+        if settings('backupPath'):
+            #directory(_(33092), plugin.url_for(addon_backup), False)
+            pass
 
+        #directory("Changelog", plugin.url_for(changelog), False)
+        directory(_(33163), None, False, artwork="special://home/addons/plugin.video.emby/donations.png")
 
-@plugin.route('/')
-def root():
+        xbmcplugin.setContent(int(sys.argv[1]), 'files')
+        xbmcplugin.endOfDirectory(int(sys.argv[1]))
 
-    ''' Display all emby nodes and dynamic entries when appropriate.
-    '''
-    LOG.info(plugin.args)
-    total = int(window('Emby.nodes.total') or 0)
-    sync = get_sync()
-    whitelist = [x.replace('Mixed:', "") for x in sync['Whitelist']]
-    servers = get_credentials()['Servers'][1:]
 
-    for i in range(total):
+    @plugin.route('/settings')
+    def addon_settings():
+        xbmc.executebuiltin('Addon.OpenSettings(plugin.video.emby)')
 
-        window_prop = "Emby.nodes.%s" % i
-        path = window('%s.index' % window_prop)
 
-        if not path:
-            path = window('%s.content' % window_prop) or window('%s.path' % window_prop)
+    @plugin.route('/reset')
+    def addon_reset():
+        reset()
 
-        label = window('%s.title' % window_prop)
-        node = window('%s.type' % window_prop)
-        artwork = window('%s.artwork' % window_prop)
-        view_id = window('%s.id' % window_prop)
-        context = []
 
-        if view_id and node in ('movies', 'tvshows', 'musicvideos', 'music', 'mixed') and view_id not in whitelist:
-            label = "%s %s" % (label.decode('utf-8'), _(33166))
-            context.append((_(33123), "RunPlugin(%s)" % plugin.url_for(sync_library, library_id=view_id)))
+    @plugin.route('/restart')
+    def addon_restart():
+        window('emby.restart.bool', True)
 
-        if view_id and node in ('movies', 'tvshows', 'musicvideos', 'music') and view_id in whitelist:
 
-            context.append((_(33136), "RunPlugin(%s)" % plugin.url_for(update_library, library_id=view_id)))
-            context.append((_(33132), "RunPlugin(%s)" % plugin.url_for(repair_library, library_id=view_id)))
-            context.append((_(33133), "RunPlugin(%s)" % plugin.url_for(remove_library, library_id=view_id)))
+    @plugin.route('/backup')
+    def addon_backup():
+        from helper.utils import delete_folder, copytree
 
-        LOG.debug("--[ listing/%s/%s ] %s", node, label, path)
+        ''' Emby backup of settings.xml and database files.
+        '''
+        path = settings('backupPath')
+        folder_name = "Kodi%s.%s" % (xbmc.getInfoLabel('System.BuildVersion')[:2], xbmc.getInfoLabel('System.Date(dd-mm-yy)'))
+        folder_name = dialog("input", heading=_(33089), defaultt=folder_name)
 
-        if path:
-            if xbmc.getCondVisibility('Window.IsActive(Pictures)') and node in ('photos', 'homevideos'):
-                directory(label, path, artwork=artwork)
-            elif xbmc.getCondVisibility('Window.IsActive(Videos)') and node not in ('photos', 'music', 'audiobooks'):
-                LOG.info(label)
-                LOG.info(path)
-                directory(label, path, artwork=artwork, context=context)
-            elif xbmc.getCondVisibility('Window.IsActive(Music)') and node in ('music'):
-                directory(label, path, artwork=artwork, context=context)
-            elif not xbmc.getCondVisibility('Window.IsActive(Videos) | Window.IsActive(Pictures) | Window.IsActive(Music)'):
-                directory(label, path, artwork=artwork)
+        if not folder_name:
+            return
 
-    for server in servers:
-        context = [(_(30500), "RunPlugin(%s)" % plugin.url_for(server_ssl, server_id=server['Id']))]
+        backup = os.path.join(path, folder_name)
 
-        if server.get('ManualAddress'):
-            context.append((_(33141), "RunPlugin(%s)" % plugin.url_for(server_remove, server_id=server['Id'])))
+        if xbmcvfs.exists(backup + '/'):
+            if not dialog("yesno", heading="{emby}", line1=_(33090)):
 
-        if 'AccessToken' not in server:
-            directory("%s (%s)" % (server['Name'], _(30539)), plugin.url_for(server_login, server_id=server['Id']), False, context=context)
-        else:
-            directory(server['Name'], "plugin://plugin.video.emby/?mode=browse&server=%s" % server['Id'], context=context)
+                return backup()
 
+            delete_folder(backup)
 
-    directory(_(33134), plugin.url_for(server_add), False)
-    directory(_(33054), plugin.url_for(additional_users), False)
-    directory(_(33194), plugin.url_for(manage_libraries), True)
-    directory(_(5), plugin.url_for(addon_settings), False)
-    directory(_(33059), plugin.url_for(sync_artwork), False)
-    directory(_(33058), plugin.url_for(addon_reset), False)
-    directory(_(33192), plugin.url_for(addon_restart), False)
+        addon_data = xbmc.translatePath("special://profile/addon_data/plugin.video.emby").decode('utf-8')
+        destination_data = os.path.join(backup, "addon_data", "plugin.video.emby")
+        destination_databases = os.path.join(backup, "Database")
 
-    if settings('backupPath'):
-        directory(_(33092), plugin.url_for(addon_backup), False)
+        if not xbmcvfs.mkdirs(path) or not xbmcvfs.mkdirs(destination_databases):
 
-    directory("Changelog", plugin.url_for(changelog), False)
-    directory(_(33163), None, False, artwork="special://home/addons/plugin.video.emby/donations.png")
+            LOG.info("Unable to create all directories")
+            dialog("notification", heading="{emby}", icon="{emby}", message=_(33165), sound=False)
 
-    xbmcplugin.setContent(int(sys.argv[1]), 'files')
-    xbmcplugin.endOfDirectory(int(sys.argv[1]))
+            return
 
+        copytree(addon_data, destination_data)
 
-@plugin.route('/manage')
-def manage_libraries():
+        databases = objects.Objects().objects
 
-    directory(_(33098), plugin.url_for(sync_boxsets), False)
-    directory(_(33154), plugin.url_for(sync_libraries), False)
-    directory(_(33139), plugin.url_for(update_libraries), False)
-    directory(_(33140), plugin.url_for(repair_libraries), False)
-    directory(_(33184), plugin.url_for(remove_libraries), False)
-    directory(_(33060), plugin.url_for(sync_themes), False)
+        db = xbmc.translatePath(databases['emby']).decode('utf-8')
+        xbmcvfs.copy(db, os.path.join(destination_databases, db.rsplit('\\', 1)[1]))
+        LOG.info("copied emby.db")
 
-    if kodi_version() >= 18:
-        directory(_(33202), plugin.url_for(sync_music_patch), False)
-
-    xbmcplugin.setContent(int(sys.argv[1]), 'files')
-    xbmcplugin.endOfDirectory(int(sys.argv[1]))
-
-
-@plugin.route('/embyconnect')
-def emby_connect():
-    event('EmbyConnect')
-
-
-@plugin.route('/settings')
-def addon_settings():
-    xbmc.executebuiltin('Addon.OpenSettings(plugin.video.emby)')
-
-
-@plugin.route('/patch')
-def patch_update():
-    event('CheckUpdate')
-
-
-@plugin.route('/server')
-def server_add():
-    event('AddServer')
-
-
-@plugin.route('/server/update')
-def server_update():
-    event('UpdateServer')
-
-
-@plugin.route('/server/<server_id>/login')
-def server_login(server_id):
-    event('ServerConnect', {'Id': server_id})
-
-
-@plugin.route('/server/<server_id>/ssl')
-def server_ssl(server_id):
-    event('SetServerSSL', {'Id': server_id})
-
-
-@plugin.route('/server/<server_id>/remove')
-def server_remove(server_id):
-    event('RemoveServer', {'Id': server_id})
-
-
-@plugin.route('/delete')
-@server()
-def delete_item():
-    import context
-
-    ''' Delete keymap action.
-    '''
-    context.Context(delete=True)
-
-
-@plugin.route('/reset')
-def addon_reset():
-    reset()
-
-
-@plugin.route('/reset/deviceid')
-def reset_device_id():
-    client.reset_device_id()
-
-
-@plugin.route('/reset/patch')
-def patch_reset():
-    event('ResetUpdate')
-
-
-@plugin.route('/restart')
-def addon_restart():
-    window('emby.restart.bool', True)
-
-
-@plugin.route('/backup')
-def addon_backup():
-    from helper.utils import delete_folder, copytree
-
-    ''' Emby backup of settings.xml and database files.
-    '''
-    path = settings('backupPath')
-    folder_name = "Kodi%s.%s" % (xbmc.getInfoLabel('System.BuildVersion')[:2], xbmc.getInfoLabel('System.Date(dd-mm-yy)'))
-    folder_name = dialog("input", heading=_(33089), defaultt=folder_name)
-
-    if not folder_name:
-        return
-
-    backup = os.path.join(path, folder_name)
-
-    if xbmcvfs.exists(backup + '/'):
-        if not dialog("yesno", heading="{emby}", line1=_(33090)):
-
-            return backup()
-
-        delete_folder(backup)
-
-    addon_data = xbmc.translatePath("special://profile/addon_data/plugin.video.emby").decode('utf-8')
-    destination_data = os.path.join(backup, "addon_data", "plugin.video.emby")
-    destination_databases = os.path.join(backup, "Database")
-
-    if not xbmcvfs.mkdirs(path) or not xbmcvfs.mkdirs(destination_databases):
-
-        LOG.info("Unable to create all directories")
-        dialog("notification", heading="{emby}", icon="{emby}", message=_(33165), sound=False)
-
-        return
-
-    copytree(addon_data, destination_data)
-
-    databases = objects.Objects().objects
-
-    db = xbmc.translatePath(databases['emby']).decode('utf-8')
-    xbmcvfs.copy(db, os.path.join(destination_databases, db.rsplit('\\', 1)[1]))
-    LOG.info("copied emby.db")
-
-    db = xbmc.translatePath(databases['video']).decode('utf-8')
-    filename = db.rsplit('\\', 1)[1]
-    xbmcvfs.copy(db, os.path.join(destination_databases, filename))
-    LOG.info("copied %s", filename)
-
-    if settings('enableMusic.bool'):
-
-        db = xbmc.translatePath(databases['music']).decode('utf-8')
+        db = xbmc.translatePath(databases['video']).decode('utf-8')
         filename = db.rsplit('\\', 1)[1]
         xbmcvfs.copy(db, os.path.join(destination_databases, filename))
         LOG.info("copied %s", filename)
 
-    LOG.info("backup completed")
-    dialog("ok", heading="{emby}", line1="%s %s" % (_(33091), backup))
+        if settings('enableMusic.bool'):
+
+            db = xbmc.translatePath(databases['music']).decode('utf-8')
+            filename = db.rsplit('\\', 1)[1]
+            xbmcvfs.copy(db, os.path.join(destination_databases, filename))
+            LOG.info("copied %s", filename)
+
+        LOG.info("backup completed")
+        dialog("ok", heading="{emby}", line1="%s %s" % (_(33091), backup))
 
 
-@plugin.route('/changelog')
-def changelog(version=False):
-    
-    ''' Display the changelog for the current version or the latest release.
-    '''
-    version = client.get_version()
-    resp = int(bool(version)) or dialog("select", heading="{emby}", list=[_(33212), version])
+    @plugin.route('/changelog')
+    def changelog():
+        
+        ''' Display the changelog for the current version or the latest release.
+        '''
+        version = client.get_version()
+        resp = dialog("select", heading="{emby}", list=[version, _(33212)])
 
-    if resp < 0:
-        return
+        if resp < 0:
+            return
 
-    resp = "tags/%s" % version if resp else "latest"
-    src = "https://api.github.com/repos/MediaBrowser/plugin.video.emby/releases/%s" % resp
+        resp = "latest" if resp else "tags/%s" % version
+        src = "https://api.github.com/repos/MediaBrowser/plugin.video.emby/releases/%s" % resp
 
-    try:
-        response = requests.get(src)
-        response.raise_for_status()
-        response.encoding = 'utf-8'
-        response = response.json()
-        response['body'] = "[B]%s[/B]\n\n%s" % (response['name'], response['body'])
-        response['body'] = response['body'].replace('**:', '[/B]').replace('**', '[B]').replace('*', '-')
-        dialog("textviewer", heading="{emby}", text=response['body'])
-    except Exception as error:
+        try:
+            response = requests.get(src)
+            response.raise_for_status()
+            response.encoding = 'utf-8'
+            response = response.json()
+            response['body'] = "[B]%s[/B]\n\n%s" % (response['name'], response['body'])
+            response['body'] = response['body'].replace('**:', '[/B]').replace('**', '[B]').replace('*', '-')
+            dialog("textviewer", heading="{emby}", text=response['body'])
+        except Exception as error:
 
-        LOG.error(error)
-        dialog("notification", heading="{emby}", message=_(33204), icon="{emby}", time=1000, sound=False)
-
-    return
-
-
-@plugin.route('/changelog/version')
-def changelog_version():
-    changelog(version=True)
-
-
-@plugin.route('/sync/library')
-@server()
-def sync_libraries():
-    event('AddLibrarySelection')
-
-
-@plugin.route('/sync/library/repair')
-@server()
-def repair_libraries():
-    event('RepairLibrarySelection')
-
-
-@plugin.route('/sync/library/update')
-@server()
-def update_libraries():
-    event('SyncLibrarySelection')
-
-
-@plugin.route('/sync/library/remove')
-@server()
-def remove_libraries():
-    event('RemoveLibrarySelection')
-
-
-@plugin.route('/sync/library/<library_id>')
-@server()
-def sync_library(library_id):
-    event('SyncLibrary', {'Id': library_id})
-
-
-@plugin.route('/sync/library/<library_id>/update')
-@server()
-def update_library(library_id):
-    event('SyncLibrary', {'Id': library_id, 'Update': True})
-
-
-@plugin.route('/sync/library/<library_id>/repair')
-@server()
-def repair_library(library_id):
-    event('RepairLibrary', {'Id': library_id})
-
-
-@plugin.route('/sync/library/<library_id>/remove')
-@server()
-def remove_library(library_id):
-    event('RemoveLibrary', {'Id': library_id})
-
-
-@plugin.route('/sync/artwork')
-@server()
-def sync_artwork():
-    from objects.kodi import artwork
-
-    ''' Give the option to delete all artwork and cache all artwork found in Kodi.
-    '''
-    artwork.Artwork(None).cache_textures()
-
-
-@plugin.route('/sync/music/patch')
-@server()
-def sync_music_patch():
-    event('PatchMusic', {'Notification': True})
-
-
-@plugin.route('/sync/boxsets')
-@server()
-def sync_boxsets():
-    event('SyncLibrary', {'Id': "Boxsets:Refresh"})
-
-
-@plugin.route('/sync/themes')
-@server()
-def sync_themes():
-    from helper.utils import normalize_string
-    from helper.playutils import PlayUtils
-    from helper.xmls import tvtunes_nfo
-
-    ''' Add theme media locally, via strm. This is only for tv tunes.
-        If another script is used, adjust this code.
-    '''
-    library = xbmc.translatePath("special://profile/addon_data/plugin.video.emby/library").decode('utf-8')
-    play = settings('useDirectPaths') == "1"
-
-    if not xbmcvfs.exists(library + '/'):
-        xbmcvfs.mkdir(library)
-
-    if xbmc.getCondVisibility('System.HasAddon(script.tvtunes)'):
-
-        tvtunes = xbmcaddon.Addon(id="script.tvtunes")
-        tvtunes.setSetting('custom_path_enable', "true")
-        tvtunes.setSetting('custom_path', library)
-        LOG.info("TV Tunes custom path is enabled and set.")
-    else:
-        dialog("ok", heading="{emby}", line1=_(33152))
+            LOG.error(error)
+            dialog("notification", heading="{emby}", message=_(33204), icon="{emby}", time=1000, sound=False)
 
         return
 
-    with Database('emby') as embydb:
-        all_views = emby_db.EmbyDatabase(embydb.cursor).get_views()
-        views = [x[0] for x in all_views if x[2] in ('movies', 'tvshows', 'mixed')]
 
-    items = {}
-    server = EMBY['auth/server-address']
-    token = EMBY['auth/token']
+    @plugin.route('/sync/artwork')
+    @server()
+    def sync_artwork():
+        from objects.kodi import artwork
 
-    for view in views:
-        result = EMBY['api'].get_items_theme_video(view)
-
-        for item in result['Items']:
-
-            folder = normalize_string(item['Name'].encode('utf-8'))
-            items[item['Id']] = folder
-
-        result = EMBY['api'].get_items_theme_song(view)
-
-        for item in result['Items']:
-
-            folder = normalize_string(item['Name'].encode('utf-8'))
-            items[item['Id']] = folder
-
-    for item in items:
-
-        nfo_path = os.path.join(library, items[item]).decode('utf-8')
-        nfo_file = os.path.join(nfo_path, "tvtunes.nfo").decode('utf-8')
-
-        if not xbmcvfs.exists(nfo_path):
-            xbmcvfs.mkdir(nfo_path)
-
-        themes = EMBY['api'].get_themes(item)
-        paths = []
-
-        for theme in themes['ThemeVideosResult']['Items'] + themes['ThemeSongsResult']['Items']:
-            putils = PlayUtils(theme, False, EMBY)
-
-            if play:
-                paths.append(putils.direct_play(theme['MediaSources'][0]))
-            else:
-                paths.append(putils.direct_url(theme['MediaSources'][0]))
-
-        tvtunes_nfo(nfo_file, paths)
-
-    dialog("notification", heading="{emby}", message=_(33153), icon="{emby}", time=1000, sound=False)
+        ''' Give the option to delete all artwork and cache all artwork found in Kodi.
+        '''
+        artwork.Artwork(None).cache_textures()
 
 
-@plugin.route('/users')
-@server()
-def additional_users():
-
-    permanent = plugin.args.get('permanent') == 'true'
-    session = EMBY['api'].get_device(EMBY['config/app.device_id'])
-    hidden = None if settings('addUsersHidden.bool') else False
-    users = EMBY['api'].get_users(False, hidden)
-
-    for user in users:
-
-        if user['Id'] == session[0]['UserId']:
-            users.remove(user)
-
-            break
-
-    while True:
-
-        session = EMBY['api'].get_device(EMBY['config/app.device_id'])
-        additional = current = session[0]['AdditionalUsers']
-        add_session = True
-
-        if permanent:
-
-            perm_users = settings('addUsers').split(',') if settings('addUsers') else []
-            current = []
-
-            for user in users:
-                for perm_user in perm_users:
-
-                    if user['Id'] == perm_user:
-                        current.append({'UserName': user['Name'], 'UserId': user['Id']})
-
-        result = dialog("select", _(33061), [_(33062), _(33063)] if current else [_(33062)])
-
-        if result < 0:
-            break
-
-        if not result: # Add user
-
-            eligible = [x for x in users if x['Id'] not in [current_user['UserId'] for current_user in current]]
-            resp = dialog("select", _(33064), [x['Name'] for x in eligible])
-
-            if resp < 0:
-                break
-
-            user = eligible[resp]
-
-            if permanent:
-
-                perm_users.append(user['Id'])
-                settings('addUsers', ','.join(perm_users))
-
-                if user['Id'] in [current_user['UserId'] for current_user in additional]:
-                    add_session = False
-            
-            if add_session:
-                event('AddUser', {'Id': user['Id'], 'Add': True})
-
-            dialog("notification", heading="{emby}", message="%s %s" % (_(33067), user['Name']), icon="{emby}", time=1000, sound=False)
-        else: # Remove user
-            resp = dialog("select", _(33064), [x['UserName'] for x in current])
-
-            if resp < 0:
-                break
-
-            user = current[resp]
-
-            if permanent:
-
-                perm_users.remove(user['UserId'])
-                settings('addUsers', ','.join(perm_users))
-            
-            if add_session:
-                event('AddUser', {'Id': user['UserId'], 'Add': False})
-
-            dialog("notification", heading="{emby}", message="%s %s" % (_(33066), user['UserName']), icon="{emby}", time=1000, sound=False)
+    #@server()
+    @plugin.route('/sync/boxsets')
+    def sync_boxsets():
+        event('SyncLibrary', {'Id': "Boxsets:Refresh"})
 
 
-@plugin.route('/browse/<folder>')
-@server()
-def browse(folder):
+    #@server()
+    @plugin.route('/sync/themes')
+    def sync_themes():
+        from helper.utils import normalize_string
+        from helper.playutils import PlayUtils
+        from helper.xmls import tvtunes_nfo
 
-    media = plugin.args.get('type')
-    item_id = plugin.args.get('view', folder)
-    server_id = EMBY['auth/server-id'] if not EMBY['config/app.default'] else None
+        ''' Add theme media locally, via strm. This is only for tv tunes.
+            If another script is used, adjust this code.
+        '''
+        library = xbmc.translatePath("special://profile/addon_data/plugin.video.emby/library").decode('utf-8')
+        play = settings('useDirectPaths') == "1"
+
+        if not xbmcvfs.exists(library + '/'):
+            xbmcvfs.mkdir(library)
+
+        if xbmc.getCondVisibility('System.HasAddon(script.tvtunes)'):
+
+            tvtunes = xbmcaddon.Addon(id="script.tvtunes")
+            tvtunes.setSetting('custom_path_enable', "true")
+            tvtunes.setSetting('custom_path', library)
+            LOG.info("TV Tunes custom path is enabled and set.")
+        else:
+            dialog("ok", heading="{emby}", line1=_(33152))
+
+            return
+
+        with Database('emby') as embydb:
+            all_views = emby_db.EmbyDatabase(embydb.cursor).get_views()
+            views = [x[0] for x in all_views if x[2] in ('movies', 'tvshows', 'mixed')]
+
+        items = {}
+        server = EMBY['auth/server-address']
+        token = EMBY['auth/token']
+
+        for view in views:
+            result = EMBY['api'].get_items_theme_video(view)
+
+            for item in result['Items']:
+
+                folder = normalize_string(item['Name'].encode('utf-8'))
+                items[item['Id']] = folder
+
+            result = EMBY['api'].get_items_theme_song(view)
+
+            for item in result['Items']:
+
+                folder = normalize_string(item['Name'].encode('utf-8'))
+                items[item['Id']] = folder
+
+        for item in items:
+
+            nfo_path = os.path.join(library, items[item]).decode('utf-8')
+            nfo_file = os.path.join(nfo_path, "tvtunes.nfo").decode('utf-8')
+
+            if not xbmcvfs.exists(nfo_path):
+                xbmcvfs.mkdir(nfo_path)
+
+            themes = EMBY['api'].get_themes(item)
+            paths = []
+
+            for theme in themes['ThemeVideosResult']['Items'] + themes['ThemeSongsResult']['Items']:
+                putils = PlayUtils(theme, False, EMBY)
+
+                if play:
+                    paths.append(putils.direct_play(theme['MediaSources'][0]))
+                else:
+                    paths.append(putils.direct_url(theme['MediaSources'][0]))
+
+            tvtunes_nfo(nfo_file, paths)
+
+        dialog("notification", heading="{emby}", message=_(33153), icon="{emby}", time=1000, sound=False)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+def directory(label, path, folder=True, artwork=None, fanart=None, context=None):
+
+    ''' Add directory listitem. context should be a list of tuples [(label, action)*]
+    '''
+    li = dir_listitem(label, path, artwork, fanart)
+
+    if context:
+        li.addContextMenuItems(context)
+
+    xbmcplugin.addDirectoryItem(int(sys.argv[1]), path, li, folder)
+
+    return li
+
+def dir_listitem(label, path, artwork=None, fanart=None):
+
+    li = xbmcgui.ListItem(label, path=path)
+    li.setThumbnailImage(artwork or "special://home/addons/plugin.video.emby/icon.png")
+    li.setArt({"fanart": fanart or "special://home/addons/plugin.video.emby/fanart.jpg"})
+    li.setArt({"landscape": artwork or fanart or "special://home/addons/plugin.video.emby/fanart.jpg"})
+
+    return li
+
+def manage_libraries():
+
+    directory(_(33098), plugin.url_for(sync_boxsets), False)
+    directory(_(33154), "plugin://plugin.video.emby/?mode=addlibs", False)
+    directory(_(33139), "plugin://plugin.video.emby/?mode=updatelibs", False)
+    directory(_(33140), "plugin://plugin.video.emby/?mode=repairlibs", False)
+    directory(_(33184), "plugin://plugin.video.emby/?mode=removelibs", False)
+    directory(_(33060), plugin.url_for(sync_themes), False)
+
+    if kodi_version() >= 18:
+        directory(_(33202), "plugin://plugin.video.emby/?mode=patchmusic", False)
+
+    xbmcplugin.setContent(int(sys.argv[1]), 'files')
+    xbmcplugin.endOfDirectory(int(sys.argv[1]))
+
+def browse(media, view_id=None, folder=None, server_id=None):
 
     ''' Browse content dynamically.
     '''
-    """
     LOG.info("--[ v:%s/%s ] %s", view_id, media, folder)
-    LOG.info("hello")
-    server_id = EMBY['auth/server-id'] if server_id else None
-    LOG.info(server_id)
-    """
+    get_server(server_id)
+
     folder = folder.lower() if folder else None
 
     if folder is None and media in ('homevideos', 'movies', 'books', 'audiobooks'):
-        LOG.info("hello4")
-        return browse_subfolders(media, view_id, plugin.args.get('server'))
-    LOG.info("hello1")
+        return browse_subfolders(media, view_id, server_id)
+
     if folder and folder == 'firstletter':
         return browse_letters(media, view_id, server_id)
-    LOG.info("hello2")
+
     if view_id:
 
         view = EMBY['api'].get_item(view_id)
         xbmcplugin.setPluginCategory(int(sys.argv[1]), view['Name'])
-    LOG.info("hello3")
+
     content_type = "files"
 
     if media in ('tvshows', 'seasons', 'episodes', 'movies', 'musicvideos', 'songs', 'albums'):
@@ -786,7 +636,6 @@ def browse(folder):
     elif media == 'boxsets':
         listing = downloader.get_filtered_section(folder or view_id, None, None, False, None, None, ['Boxsets'], None, server_id)
     elif media == 'tvshows':
-        LOG.info("hello world")
         listing = downloader.get_filtered_section(folder or view_id, get_media_type(content_type), None, True, None, None, None, None, server_id)
     elif media == 'seasons':
         listing = EMBY['api'].get_seasons(folder)
@@ -795,7 +644,7 @@ def browse(folder):
     else:
         listing = downloader.get_filtered_section(folder or view_id, None, None, False, None, None, None, None, server_id)
 
-    LOG.info(listing)
+
     if listing:
 
         listitems = objects.ListItem(EMBY['auth/server-address'])
@@ -845,10 +694,7 @@ def browse(folder):
                 list_li.append((path, li, True))
 
             else:
-                if item['Type'] == 'Photo':
-                    path = plugin.url_for(photo, item_id=item['Id'])
-
-                elif item['Type'] != 'PhotoAlbum':
+                if item['Type'] not in ('Photo', 'PhotoAlbum'):
 
                     if kodi_version() > 17:
                         path = "http://127.0.0.1:57578/emby/play/file.strm?mode=play&Id=%s&server=%s" % (item['Id'], server_id)
@@ -884,18 +730,17 @@ def browse(folder):
     xbmcplugin.setContent(int(sys.argv[1]), content_type)
     xbmcplugin.endOfDirectory(int(sys.argv[1]))
 
-@catch()
 def browse_subfolders(media, view_id, server_id=None):
 
     ''' Display submenus for emby views.
     '''
-    LOG.info("hello5")
     from views import DYNNODES
-    LOG.info("hello6")
+
+    get_server(server_id)
     view = EMBY['api'].get_item(view_id)
-    xbmcplugin.setPluginCategory(plugin.handle, view['Name'])
+    xbmcplugin.setPluginCategory(int(sys.argv[1]), view['Name'])
     nodes = DYNNODES[media]
-    LOG.info("hello7")
+
     for node in nodes:
 
         params = {
@@ -907,9 +752,9 @@ def browse_subfolders(media, view_id, server_id=None):
         }
         path = "%s?%s" % ("plugin://plugin.video.emby/",  urllib.urlencode(params))
         directory(node[1] or view['Name'], path)
-    LOG.info("hello8")
-    xbmcplugin.setContent(plugin.handle, 'files')
-    xbmcplugin.endOfDirectory(plugin.handle)
+
+    xbmcplugin.setContent(int(sys.argv[1]), 'files')
+    xbmcplugin.endOfDirectory(int(sys.argv[1]))
 
 def browse_letters(media, view_id, server_id=None):
 
@@ -917,6 +762,7 @@ def browse_letters(media, view_id, server_id=None):
     '''
     letters = "#ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
+    get_server(server_id)
     view = EMBY['api'].get_item(view_id)
     xbmcplugin.setPluginCategory(int(sys.argv[1]), view['Name'])
 
@@ -970,7 +816,6 @@ def get_media_type(media):
     elif media == 'music':
         return "MusicArtist,MusicAlbum,Audio"
 
-@server()
 def get_fanart(item_id, path, server_id=None):
 
     ''' Get extra fanart for listitems. This is called by skinhelper.
@@ -983,6 +828,7 @@ def get_fanart(item_id, path, server_id=None):
         return
 
     LOG.info("[ extra fanart ] %s", item_id)
+    get_server(server_id)
     objects = objects.Objects()
     list_li = []
     directory = xbmc.translatePath("special://thumbnails/emby/%s/" % item_id).decode('utf-8')
@@ -1014,7 +860,6 @@ def get_fanart(item_id, path, server_id=None):
     xbmcplugin.addDirectoryItems(int(sys.argv[1]), list_li, len(list_li))
     xbmcplugin.endOfDirectory(int(sys.argv[1]))
 
-@server()
 def get_video_extras(item_id, path, server_id=None):
 
     ''' Returns the video files for the item as plugin listing, can be used
@@ -1026,6 +871,7 @@ def get_video_extras(item_id, path, server_id=None):
     if not item_id:
         return
 
+    get_server(server_id)
     item = EMBY['api'].get_item(item_id)
     # TODO
 
@@ -1316,13 +1162,6 @@ def get_themes():
         tvtunes.setSetting('custom_path_enable', "true")
         tvtunes.setSetting('custom_path', library)
         LOG.info("TV Tunes custom path is enabled and set.")
-
-    elif xbmc.getCondVisibility('System.HasAddon(service.tvtunes)'):
-
-        tvtunes = xbmcaddon.Addon(id="service.tvtunes")
-        tvtunes.setSetting('custom_path_enable', "true")
-        tvtunes.setSetting('custom_path', library)
-        LOG.info("TV Tunes custom path is enabled and set.")
     else:
         dialog("ok", heading="{emby}", line1=_(33152))
 
@@ -1383,64 +1222,5 @@ def delete_item():
 
     context.Context(delete=True)
 
-def backup():
-
-    ''' Emby backup.
-    '''
-    from helper.utils import delete_folder, copytree
-
-    path = settings('backupPath')
-    folder_name = "Kodi%s.%s" % (xbmc.getInfoLabel('System.BuildVersion')[:2], xbmc.getInfoLabel('System.Date(dd-mm-yy)'))
-    folder_name = dialog("input", heading=_(33089), defaultt=folder_name)
-
-    if not folder_name:
-        return
-
-    backup = os.path.join(path, folder_name)
-
-    if xbmcvfs.exists(backup + '/'):
-        if not dialog("yesno", heading="{emby}", line1=_(33090)):
-
-            return backup()
-
-        delete_folder(backup)
-
-    addon_data = xbmc.translatePath("special://profile/addon_data/plugin.video.emby").decode('utf-8')
-    destination_data = os.path.join(backup, "addon_data", "plugin.video.emby")
-    destination_databases = os.path.join(backup, "Database")
-
-    if not xbmcvfs.mkdirs(path) or not xbmcvfs.mkdirs(destination_databases):
-
-        LOG.info("Unable to create all directories")
-        dialog("notification", heading="{emby}", icon="{emby}", message=_(33165), sound=False)
-
-        return
-
-    copytree(addon_data, destination_data)
-
-    databases = objects.Objects().objects
-
-    db = xbmc.translatePath(databases['emby']).decode('utf-8')
-    xbmcvfs.copy(db, os.path.join(destination_databases, db.rsplit('\\', 1)[1]))
-    LOG.info("copied emby.db")
-
-    db = xbmc.translatePath(databases['video']).decode('utf-8')
-    filename = db.rsplit('\\', 1)[1]
-    xbmcvfs.copy(db, os.path.join(destination_databases, filename))
-    LOG.info("copied %s", filename)
-
-    if settings('enableMusic.bool'):
-
-        db = xbmc.translatePath(databases['music']).decode('utf-8')
-        filename = db.rsplit('\\', 1)[1]
-        xbmcvfs.copy(db, os.path.join(destination_databases, filename))
-        LOG.info("copied %s", filename)
-
-    LOG.info("backup completed")
-    dialog("ok", heading="{emby}", line1="%s %s" % (_(33091), backup))
-
-def cache_artwork():
-
-    from objects.kodi import artwork
-
-    artwork.Artwork(None).cache_textures()
+if __name__ == '__main__':
+    plugin = routing.Plugin()

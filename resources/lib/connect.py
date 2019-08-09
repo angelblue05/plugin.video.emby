@@ -32,41 +32,6 @@ class Connect(object):
     def __init__(self):
         self.info = client.get_info()
 
-    def _save_servers(self, new_servers, default=False):
-        credentials = get_credentials()
-
-        if not new_servers:
-            return credentials
-
-        for new_server in new_servers:
-            for server in credentials['Servers']:
-
-                if server['Id'] == new_server['Id']:
-                    server.update(new_server)
-
-                    if default:
-                        credentials['Servers'].remove(server)
-                        credentials['Servers'].insert(0, server)
-
-                    break
-            else:
-                if default:
-                    credentials['Servers'].insert(0, new_server)
-                else:
-                    credentials['Servers'].append(new_server)
-
-        if default:
-            default_server = new_servers[0]
-
-            for server in credentials['Servers']:
-
-                if server['Id'] == default_server['Id']:
-                    credentials['Servers'].remove(server)
-
-            credentials['Servers'].insert(0, default_server)
-
-        return credentials
-
     def register(self, server_id=None, options={}):
 
         ''' Login into server. If server is None, then it will show the proper prompts to login, etc.
@@ -74,13 +39,14 @@ class Connect(object):
         '''
         LOG.info("--[ server/%s ]", server_id or 'default')
 
-        if (server_id) in self.pending:
+        if (server_id or 'default') in self.pending:
             LOG.info("[ server/%s ] is already being registered", server_id or 'default')
 
             return
 
-        self.pending.append(server_id)
-        credentials = get_credentials()
+        self.pending.append(server_id or 'default')
+        credentials = dict(get_credentials())
+        servers = credentials['Servers']
 
         if server_id is None and credentials['Servers']:
             credentials['Servers'] = [credentials['Servers'][0]]
@@ -109,7 +75,7 @@ class Connect(object):
         except ValueError as error:
             LOG.error(error)
 
-        self.pending.remove(server_id)
+        self.pending.remove(server_id or 'default')
 
     def get_ssl(self):
 
@@ -249,9 +215,9 @@ class Connect(object):
         except RuntimeError:
             return
 
-        new_credentials = client.get_credentials()
-        credentials = self._save_servers(new_credentials['Servers'])
+        credentials = client.get_credentials()
         save_credentials(credentials)
+        window('emby.restart.bool', True)
 
     def manual_server(self, manager=None):
 
@@ -280,8 +246,7 @@ class Connect(object):
         except RuntimeError:
             return
 
-        new_credentials = client.get_credentials()
-        credentials = self._save_servers(new_credentials['Servers'])
+        credentials = client.get_credentials()
         save_credentials(credentials)
 
     def login_connect(self, manager=None):
@@ -347,8 +312,7 @@ class Connect(object):
         except RuntimeError:
             return
 
-        new_credentials = client.get_credentials()
-        credentials = self._save_servers(new_credentials['Servers'])
+        credentials = client.get_credentials()
         save_credentials(credentials)
 
     def login_manual(self, user=None, manager=None):
@@ -372,7 +336,6 @@ class Connect(object):
         credentials = get_credentials()
 
         for server in credentials['Servers']:
-
             if server['Id'] == server_id:
                 credentials['Servers'].remove(server)
 
@@ -386,10 +349,10 @@ class Connect(object):
         ''' Allow user to setup ssl verification for additional servers.
         '''
         value = dialog("yesno", heading="{emby}", line1=_(33217))
+        LOG.info(type(value))
         credentials = get_credentials()
 
         for server in credentials['Servers']:
-
             if server['Id'] == server_id:
                 server['verify'] = bool(value)
 

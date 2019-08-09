@@ -365,7 +365,7 @@ class Views(object):
                 etree.SubElement(rule, 'value').text = view['Tag']
 
         if item_type == 'favorites' and view['Media'] == 'episodes':
-            path = self.window_browse(view, 'FavEpisodes')
+            path = self.window_browse(view, 'favepisodes')
             self.node_favepisodes(xml, path)
         else:
             self.node_all(xml)
@@ -953,18 +953,20 @@ class Views(object):
 
     def window_browse(self, view, node=None):
 
+        path = "plugin://plugin.video.emby/browse"
         params = {
-            'mode': "browse",
             'type': view['Media']
         }
 
         if view.get('Id'):
-            params['id'] = view['Id']
+            path += "/%s" % view['Id']
 
         if node:
             params['folder'] = node
 
-        return "%s?%s" % ("plugin://plugin.video.emby/", urllib.urlencode(params))
+        path = "%s?%s" % (path, urllib.urlencode(params))
+
+        return path
 
     def window_clear(self, name=None):
 

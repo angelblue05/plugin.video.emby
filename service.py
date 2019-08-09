@@ -36,7 +36,6 @@ sys.argv.append('service')
 #################################################################################################
 
 from helper import settings
-import entrypoint
 
 #################################################################################################
 
@@ -62,7 +61,7 @@ class ServiceManager(threading.Thread):
         threading.Thread.__init__(self)
 
     def run(self):
-        global entrypoint
+        import entrypoint
         global settings
 
         service = None
