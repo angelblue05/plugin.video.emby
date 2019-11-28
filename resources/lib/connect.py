@@ -32,6 +32,41 @@ class Connect(object):
     def __init__(self):
         self.info = client.get_info()
 
+    def _save_servers(self, new_servers, default=False):
+        credentials = get_credentials()
+
+        if not new_servers:
+            return credentials
+
+        for new_server in new_servers:
+            for server in credentials['Servers']:
+
+                if server['Id'] == new_server['Id']:
+                    server.update(new_server)
+
+                    if default:
+                        credentials['Servers'].remove(server)
+                        credentials['Servers'].insert(0, server)
+
+                    break
+            else:
+                if default:
+                    credentials['Servers'].insert(0, new_server)
+                else:
+                    credentials['Servers'].append(new_server)
+
+        if default:
+            default_server = new_servers[0]
+
+            for server in credentials['Servers']:
+
+                if server['Id'] == default_server['Id']:
+                    credentials['Servers'].remove(server)
+
+            credentials['Servers'].insert(0, default_server)
+
+        return credentials
+
     def register(self, server_id=None, options={}):
 
         ''' Login into server. If server is None, then it will show the proper prompts to login, etc.

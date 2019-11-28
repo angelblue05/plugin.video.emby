@@ -165,7 +165,7 @@ class HTTP(object):
                 LOG.debug("---<[ http ][%s ms]", elapsed)
 
                 try:
-                    self.config['server-time'] = r.headers['Date']
+                    self.client['config']['server-time'] = r.headers['Date']
                     if r.status_code == 204:
                         # return, because there is no response
                         return
