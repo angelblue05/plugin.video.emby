@@ -304,7 +304,9 @@ class Service(xbmc.Monitor):
                 return
 
             LOG.info("[ LibraryChanged ] %s", data)
-            self['library'].updated(data['ItemsUpdated'] + data['ItemsAdded'])
+            if (len(data['ItemsUpdated']) + len(data['ItemsAdded']) + len(data['ItemsRemoved'])) > 0:
+                self['library'].get_fast_sync()
+                #self['library'].updated(data['ItemsUpdated'] + data['ItemsAdded'])
             self['library'].removed(data['ItemsRemoved'])
             self['library'].delay_verify(data.get('ItemsVerify', []))
 
