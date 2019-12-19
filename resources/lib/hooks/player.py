@@ -268,7 +268,7 @@ class Player(xbmc.Player):
 
         ''' Call when playback start to setup play entry in player tracker.
         '''
-        self.playlist = xbmc.PlayList(self.monitor.playlistid)
+        self.playlist = xbmc.PlayList(self.monitor.playlistid or 1)
 
         if not file:
             LOG.warn("Filename is invalid")
