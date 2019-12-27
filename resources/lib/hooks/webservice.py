@@ -347,7 +347,7 @@ class PlayWidget(threading.Thread):
             Widgets start with a music playlist, this causes bugs in skin, etc.
             Create a new video playlist for the item and play it.
         '''
-        xbmc.sleep(200) # Let Kodi catch up
+        xbmc.sleep(1000) # Let Kodi catch up
         LOG.info("-->[ widget play ]")
         play = None
 
@@ -397,6 +397,7 @@ class PlayFolder(threading.Thread):
         LOG.info("-->[ folder play ]")
         play = None
         position = 1 # play folder should always create a new playlist.
+        monitor = xbmc.Monitor()
 
         while True:
             if not window('emby.playlist.plugin.bool'): # default.py wait for initial item to start up
@@ -415,10 +416,10 @@ class PlayFolder(threading.Thread):
 
                     play = objects.PlayStrm(params, server)
                     position = play.play_folder(position)
+                    #xbmc.sleep(500) # Let Kodi catch up
 
                 except Exception as error:
                     LOG.exception(error)
-
                     xbmc.Player().stop() # mute failed playback pop up
                     xbmc.PlayList(xbmc.PLAYLIST_VIDEO).clear()
                     self.server.queue.queue.clear()
@@ -426,6 +427,9 @@ class PlayFolder(threading.Thread):
                     break
 
                 self.server.queue.task_done()
+
+            if monitor.waitForAbort(0.5):
+                break
 
         self.server.threads.remove(self)
         self.server.pending = []
